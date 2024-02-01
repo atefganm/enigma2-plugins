@@ -17,7 +17,7 @@ from xml.etree.ElementTree import tostring, parse, fromstring
 # self.feeds: [(<Plugins.Extensions.SimpleRSS.plugin.BaseFeed object at 0xa688def0>,), (<Plugins.Extensions.SimpleRSS.plugin.UniversalFeed object at 0xa6890030>,), (<Plugins.Extensions.SimpleRSS.plugin.UniversalFeed object at 0xa68900b0>,), (<Plugins.Extensions.SimpleRSS.plugin.UniversalFeed object at 0xa68900d0>,), (<Plugins.Extensions.SimpleRSS.plugin.UniversalFeed object at 0xa68900f0>,), (<Plugins.Extensions.SimpleRSS.plugin.UniversalFeed object at 0xa6890110>,)]
 
 # ENIGMA IMPORTS
-from enigma import getDesktop, eTimer, BT_SCALE, BT_KEEP_ASPECT_RATIO, BT_HALIGN_CENTER, BT_VALIGN_CENTER
+from enigma import getDesktop, eTimer, eServiceReference, BT_SCALE, BT_KEEP_ASPECT_RATIO, BT_HALIGN_CENTER, BT_VALIGN_CENTER
 from Components.ActionMap import ActionMap
 from Components.config import config, getConfigListEntry, ConfigSubsection, ConfigSubList, ConfigEnableDisable, ConfigNumber, ConfigSelectionNumber, ConfigText, ConfigSelection
 from Components.ConfigList import ConfigListScreen
@@ -30,6 +30,7 @@ from Plugins.Extensions.PicturePlayer import ui
 from Plugins.Plugin import PluginDescriptor
 from Plugins.SystemPlugins.Toolkit.TagStrip import strip, strip_readable
 from Screens.ChoiceBox import ChoiceBox
+from Screens.InfoBar import MoviePlayer
 from Screens.MessageBox import MessageBox
 from Screens.Screen import Screen
 from Tools import Notifications
@@ -54,11 +55,15 @@ NOTIFICATIONID = 'SimpleRSSUpdateNotification'
 NS_RDF = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}"
 NS_RSS_09 = "{http://my.netscape.com/rdf/simple/0.9/}"
 NS_RSS_10 = "{http://purl.org/rss/1.0/}"
-
+MIMEIMAGES = ["image/jpg", "image/jpeg", "image/png", "image/gif", "image/webp"]
+MIMEVIDEOS = ["video/mp4"]
+MIMEAUDIOS = ["audio/mpeg"]
+EXT2MIME = {".jpg": "image/jpg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp", "mp4": "video/mp4", "mp3": "audio/mpeg"}
 # Initialize Configuration
 config.plugins.simpleRSS = ConfigSubsection()
 simpleRSS = config.plugins.simpleRSS
 simpleRSS.update_notification = ConfigSelection(choices=[("notification", _("Notification")), ("preview", _("Preview")), ("ticker", _("Ticker")), ("none", _("none"))], default="none")
+simpleRSS.ticker_ypos = ConfigSelectionNumber(0, 100, 1, default=100)
 simpleRSS.ticker_frequency = ConfigSelectionNumber(20, 200, 5, default=70)
 simpleRSS.ticker_scrollspeed = ConfigSelectionNumber(1, 16, 1, default=4)
 simpleRSS.interval = ConfigSelection(choices=[("5", "5"), ("10", "10"), ("15", "15"), ("30", "30"), ("45", "45"), ("60", "60"), ("90", "90"), ("120", "120")], default="15")
@@ -79,6 +84,8 @@ del simpleRSS, i
 
 def main(session, **kwargs):  # Main Function
 	global rssPoller  # Get Global rssPoller-Object
+	if exists(TEMPPATH):
+		rmtree(TEMPPATH)
 	if not exists(TEMPPATH):
 		mkdir(TEMPPATH)
 	for file in [NEWSLOGO, NOLOGO, NOPIC]:
@@ -136,49 +143,63 @@ def downloadPicfile(url, picfile, resize=None, fixedname=None, callback=None):
 	if url and picfile:
 		try:
 			header = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/116.0", "Accept": "text/xml"}
-			url = url.encode("ascii", "xmlcharrefreplace").decode().replace(" ", "%20").replace("\n", "")
+			url = url.encode("ascii", "xmlcharrefreplace").decode().replace(" ", "%20").replace("\n", "").replace("http://", "https://")
 			response = get(url, headers=header, timeout=(3.05, 6))
 			response.raise_for_status()
 			picfile = picfile.replace("jpeg", ".jpg")
 			if fixedname:
 				picfile = fixedname
 		except exceptions.RequestException as err:
-			print("[%s] ERROR in module 'downloadPicfile': '%s" % (MODULE_NAME, str(err)))
-		with open(picfile, "wb") as f:
-			f.write(response.content)
-		isnotpng = not picfile.endswith(".png")
-		if resize or isnotpng:
-			try:  # in case PIL cannot handle picture format
-				img = Image.open(picfile)
-				if resize:
-					img.thumbnail(resize, Image.LANCZOS)  # resize, keeping aspect ratio and antialiasing
-				pngfile = "%s.png" % picfile.split(".")[0]
-				img.save(pngfile, format="png", lossless=True)  # forced save as PNG because some boxes (e.g. HD51) wrongly display JPGs transparently
-				img.close()
-			except Exception as err:
-				pngfile = join(TEMPPATH, NOPIC)
-				print("[%s] ERROR in module 'downloadPicfile': unsupported or invalid picture format for '%s': %s" % (MODULE_NAME, str(err), pngfile))
-			if isnotpng:
-				remove(picfile)
-		else:
-			pngfile = picfile
-		if callback:
-			callback()
+			print("[%s] ERROR in module 'downloadPicfile': troubles accessing URL'%s" % (MODULE_NAME, str(err)))
+			return
+		if exists(picfile[:picfile.rfind("/")]):
+			with open(picfile, "wb") as f:
+				f.write(response.content)
+			isnotpng = not picfile.endswith(".png")
+			if resize or isnotpng:
+				try:  # in case PIL cannot handle picture format
+					img = Image.open(picfile)
+					if resize:
+						img.thumbnail(resize, Image.LANCZOS)  # resize, keeping aspect ratio and antialiasing
+					pngfile = "%s.png" % picfile[:picfile.rfind(".")]
+					img.save(pngfile, format="png", lossless=True)  # forced save as PNG because some boxes (e.g. HD51) wrongly display JPGs transparently
+					img.close()
+				except Exception as err:
+					pngfile = join(TEMPPATH, NOPIC)
+					print("[%s] ERROR in module 'downloadPicfile': unsupported or invalid picture format for '%s': %s" % (MODULE_NAME, str(err), pngfile))
+				if isnotpng and exists(picfile):
+					remove(picfile)
+			else:
+				pngfile = picfile
+			if callback:
+				callback()
 	else:
 		print("[%s] ERROR in module 'downloadPicfile': missing link or picfile." % MODULE_NAME)
 
 
 def url2filename(url, forcepng=False):
-	for itype in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
-		if itype in url:
-			return "%s.png" % hash(url) if forcepng else ("%s%s" % (hash(url), itype)).replace(".jpeg", ".jpg")
-	return ""
+	url = cleanupUrl(url)
+	return "%s.png" % hash(url) if forcepng else ("%s%s" % (hash(url), url[url.rfind("."):])).replace(".jpeg", ".jpg")
+
+
+def cleanupUrl(url):
+	if "?" in url:  # remove all stuff behind '?', e.g. 'pic.jpg?w=1200&h=675&crop=1'
+		url = url[:url.rfind("?")]
+	return url
+
+
+def isExtensionSupported(name, supportlist=MIMEIMAGES):
+    return name[name.rfind("."):] in [".%s" % type[type.rfind("/") + 1:] for type in supportlist]  # extension supported?
 
 
 class RSS_TickerView(Screen):
 	def __init__(self, session):
 		self.session = session
 		skin = readSkin("RSS_TickerView")
+		oldpos = search(r'<screen name="(.*?)".*?position="(.*?)"', skin)
+		if oldpos:
+			newpos = "%s,%s" % (oldpos.group(2).split(",")[0], int((10.26 if getDesktop(0).size().width() > 1300 else 6.84) * int(config.plugins.simpleRSS.ticker_ypos.value)))
+			skin = skin.replace('position="%s"' % oldpos. group(2), 'position="%s"' % newpos)
 		newoptions = ["steptime=%d,step=%d" % (config.plugins.simpleRSS.ticker_frequency.value, config.plugins.simpleRSS.ticker_scrollspeed.value)]
 		options = search(r'options\s*="(.*?)"', skin)
 		if options:
@@ -265,6 +286,7 @@ class RSS_Setup(ConfigListScreen, Screen):  # Setup for SimpleRSS, quick-edit fo
 		clist.append(getConfigListEntry(_("Update Interval [min]"), simpleRSS.interval))
 		clist.append(getConfigListEntry(_("Show new Messages as"), simpleRSS.update_notification))
 		if simpleRSS.update_notification.value == "ticker":
+			clist.append(getConfigListEntry(_(" *Vertical position of ticker [%] (0% = top / 100% = bottom)"), simpleRSS.ticker_ypos))
 			clist.append(getConfigListEntry(_(" *Frequency of scrollsteps [ms] (low values slow down the box)"), simpleRSS.ticker_frequency))
 			clist.append(getConfigListEntry(_(" *Scrollspeed [pixels per step] (high values lead to jerking)"), simpleRSS.ticker_scrollspeed))
 			clist.append(("",))
@@ -288,7 +310,8 @@ class RSS_Setup(ConfigListScreen, Screen):  # Setup for SimpleRSS, quick-edit fo
 				tickerView = None
 
 	def delete(self):
-		self.session.openWithCallback(self.deleteConfirm, MessageBox, _("Really delete this entry?\nIt cannot be recovered!"), MessageBox.TYPE_YESNO, timeout=30, default=False)
+		if config.plugins.simpleRSS.feed:
+			self.session.openWithCallback(self.deleteConfirm, MessageBox, _("Really delete this entry?\nIt cannot be recovered!"), MessageBox.TYPE_YESNO, timeout=30, default=False)
 
 	def deleteConfirm(self, result):
 		if result:
@@ -431,12 +454,12 @@ class RSSBaseView(Screen):  # Base Screen for all Screens used in SimpleRSS
 			self.pollDialog = self.session.open(MessageBox, _("Update is being done in Background.\nContents will automatically be updated when it's done."), type=MessageBox.TYPE_INFO, timeout=3)
 
 	def findEnclosure(self, enclosures):
-		if enclosures:
-			urllist = []
-			for enclosure in enclosures:
-				if enclosure[1] in ["image/jpg", "image/jpeg", "image/png", "image/gif", "image/webp"]:
-					urllist.append(enclosure[0].strip())
-			return urllist
+		enclist = []
+		for enclosure in enclosures:
+			if enclosure[1] in MIMEIMAGES + MIMEVIDEOS + MIMEAUDIOS:
+				enclist.append((enclosure[0].strip(), enclosure[1]))
+		enclist = list(dict.fromkeys(enclist))  # remove dupes
+		return enclist
 
 
 class RSS_EntryView(RSSBaseView):  # Shows a RSS Item
@@ -448,16 +471,28 @@ class RSS_EntryView(RSSBaseView):  # Shows a RSS Item
 		self.cur_idx = cur_idx
 		self.entries = entries
 		self.feedpng = feedLogo
+		self.enclist = []
 		self.pngfile = join(TEMPPATH, "entrypic.png")
 		self.picsize = (382, 214) if getDesktop(0).size().width() > 1300 else (255, 143)
 		self.skin = readSkin("RSS_EntryView")
 		Screen.__init__(self, session, self.skin)
 		self["title"] = StaticText(_("Simple RSS Reader EntryView"))
 		self["info"] = StaticText(_("Entry %s/%s") % (cur_idx + 1, entries)) if cur_idx is not None and entries is not None else StaticText()
-		self["content"] = ScrollLabel(''.join((data[0], '\n\n', data[2], '\n\n', str(len(data[3])), ' ', _("Enclosures")))) if data else ScrollLabel()
 		self["feedlogo"] = Pixmap()
 		self["picture"] = Pixmap()
-		self["actions"] = ActionMap(["OkCancelActions"], {"ok": self.selectEnclosure, "cancel": self.__close}, -1)
+		self["enctext"] = StaticText(_("Enclosures"))
+		self["enclist"] = List([])
+		self["content"] = ScrollLabel(''.join((data[0], '\n\n', data[2], '\n\n', str(len(data[3])), ' ', _("Enclosures")))) if data else ScrollLabel()
+		self["actions"] = ActionMap(["OkCancelActions", "DirectionActions", "ChannelSelectBaseActions"],
+						{"ok": self.showEnclosure,
+						"cancel": self.__close,
+						"up": self.keyUp,
+						"down": self.keyDown,
+						"right": self.keyPageDown,
+						"left": self.keyPageUp,
+						"nextBouquet": self.keyPageDown,
+						"prevBouquet": self.keyPageUp
+						}, -1)
 		self.onLayoutFinish.append(self.updateTitle)
 
 	def updateTitle(self):
@@ -472,13 +507,17 @@ class RSS_EntryView(RSSBaseView):  # Shows a RSS Item
 		self.setTitle(_("Simple RSS Reader: %s") % (self.feedTitle))
 		self["info"].text = _("Entry %s/%s") % (self.cur_idx + 1, self.entries) if self.cur_idx is not None and self.entries else ""
 		data = self.data
-		self["content"].setText(''.join((data[0], '\n\n', data[2], '\n\n', str(len(data[3])), ' ', _("Enclosures"))) if data else _("No such Item."))
+		self["content"].setText(''.join((data[0], '\n\n', data[2])) if data else _("No such Item."))
 		if data:
-			urllist = RSSBaseView.findEnclosure(self, data[3])
-			if urllist:
-				picfile = join(TEMPPATH, url2filename(urllist[0]))
-				if not exists(self.pngfile):
-					callInThread(downloadPicfile, urllist[0], picfile, resize=self.picsize, fixedname=self.pngfile, callback=self.refreshPic)
+			enclist = RSSBaseView.findEnclosure(self, data[3])
+			for enclosure in enclist:
+				picfile = join(TEMPPATH, url2filename(enclosure[0]))
+				if isExtensionSupported(picfile) and not exists(self.pngfile):
+					callInThread(downloadPicfile, enclosure[0], picfile, resize=self.picsize, fixedname=self.pngfile, callback=self.refreshPic)
+			if not enclist:
+				enclist = [(None, _("{no attachments found}"))]
+			self["enclist"].setList([enclosure[1] for enclosure in enclist])
+			self.enclist = enclist
 		self.updateInfo()
 
 	def updateInfo(self):
@@ -493,24 +532,47 @@ class RSS_EntryView(RSSBaseView):  # Shows a RSS Item
 		self["picture"].instance.setPixmapFromFile(pngfile)
 		self["picture"].show()
 
-	def selectEnclosure(self):
-		if self.data:
-			urllist = RSSBaseView.findEnclosure(self, self.data[3])
-			if urllist:
-				for url in urllist:
-					self.filename = join(TEMPPATH, "full_%s" % url2filename(url))
-					if exists(self.filename):
-						self.showFullpic()
-					else:
-						callInThread(downloadPicfile, url, self.filename, callback=self.showFullpic)
+	def showEnclosure(self):
+		currindex = self["enclist"].getSelectedIndex()
+		if currindex < len(self.enclist):
+			if self.enclist[currindex][1] in MIMEIMAGES:
+				self.filename = join(TEMPPATH, "full_%s" % url2filename(self.enclist[currindex][0]))
+				if exists(self.filename):
+					self.showFullpic()
+				else:
+					callInThread(downloadPicfile, self.enclist[currindex][0], self.filename, callback=self.showFullpic)
+			elif self.enclist[currindex][1] in MIMEVIDEOS + MIMEAUDIOS:
+				sref = eServiceReference(4097, 0, self.enclist[currindex][0])
+				sref.setName("SimpleRSS Stream")
+				self.session.open(MoviePlayer, sref)
+			elif self.enclist[0][0]:
+				self.session.open(MessageBox, _("Sorry, this attachment cannot be opened: unsupported MIME type"), type=MessageBox.TYPE_ERROR, timeout=5)
 
 	def showFullpic(self):
-		pngfile = join(TEMPPATH, "%s.png" % self.filename.split(".")[0])
+		pngfile = join(TEMPPATH, "%s.png" % self.filename[:self.filename.rfind(".")])
 		piclist = []
 		if exists(pngfile):
 			piclist.append(((pngfile, False), None))
 		if piclist:
 			self.session.open(ui.Pic_Full_View, piclist, 0, TEMPPATH)
+
+	def keyUp(self):
+		if self.enclist:
+			self["enclist"].up()
+		else:
+			self["content"].pageUp()
+
+	def keyDown(self):
+		if self.enclist:
+			self["enclist"].down()
+		else:
+			self["content"].pageDown()
+
+	def keyPageUp(self):
+		self["content"].pageUp()
+
+	def keyPageDown(self):
+		self["content"].pageDown()
 
 	def __close(self):
 		if exists(self.pngfile):
@@ -560,6 +622,8 @@ class RSS_FeedView(RSSBaseView):  # Shows a RSS-Feed
 			self.onExecBegin.append(self.startTimer)
 		linefile = join(PLUGINPATH, "icons/line_%s.png" % ("fHD" if getDesktop(0).size().width() > 1300 else "HD"))
 		self.linepix = LoadPixmap(cached=True, path=linefile if exists(linefile) else join(TEMPPATH, NOPIC))
+		streamfile = join(PLUGINPATH, "icons/streamicon_%s.png" % ("fHD" if getDesktop(0).size().width() > 1300 else "HD"))
+		self.streampix = LoadPixmap(cached=True, path=streamfile) if exists(streamfile) else None
 		self["content"].onSelectionChanged.append(self.updateInfo)
 		self.onLayoutFinish.append(self.onLayoutFinished)
 
@@ -579,17 +643,15 @@ class RSS_FeedView(RSSBaseView):  # Shows a RSS-Feed
 	def updateTitle(self):
 		self.buildSkinList()
 		self.updateInfo()
-		if self.feed:
-			if self.feed.logoUrl:
-				logopng = join(TEMPPATH, url2filename(self.feed.logoUrl, forcepng=True))
-			else:
-				logopng = join(TEMPPATH, NEWSLOGO) if self.feed.title == _("New Items") else join(TEMPPATH, NOLOGO)
-			if exists(logopng):
-				self["feedlogo"].instance.setPixmapScaleFlags(BT_SCALE | BT_KEEP_ASPECT_RATIO | BT_HALIGN_CENTER | BT_VALIGN_CENTER)
-				self["feedlogo"].instance.setPixmapFromFile(logopng)
-				self["feedlogo"].show()
-			else:
-				self["feedlogo"].hide()
+		logopng = join(TEMPPATH, NEWSLOGO) if self.feed.title == _("New Items") else join(TEMPPATH, NOLOGO)
+		if self.feed and self.feed.logoUrl:
+			logofile = url2filename(self.feed.logoUrl, forcepng=True)
+			if isExtensionSupported(logofile):
+				logopng = join(TEMPPATH, logofile)
+		if exists(logopng):
+			self["feedlogo"].instance.setPixmapScaleFlags(BT_SCALE | BT_KEEP_ASPECT_RATIO | BT_HALIGN_CENTER | BT_VALIGN_CENTER)
+			self["feedlogo"].instance.setPixmapFromFile(logopng)
+			self["feedlogo"].show()
 		else:
 			self["feedlogo"].hide()
 		if self.feed:
@@ -624,27 +686,36 @@ class RSS_FeedView(RSSBaseView):  # Shows a RSS-Feed
 		skinlist = []
 		if self.feed:
 			for content in self.feed.history:
-				urllist = RSSBaseView.findEnclosure(self, content[3])
-				if urllist and self.feed and self.feed.title != _("New Items"):
-					picfile = join(TEMPPATH, url2filename(urllist[0]))
-					pngfile = "%s.png" % picfile.split(".")[0]
-					if not exists(pngfile):
-						callInThread(downloadPicfile, urllist[0], picfile, resize=self.picsize, callback=self.refreshPics)
-						pngfile = self.nopic
-				else:
-					pngfile = self.nopic
+				pngfile = self.nopic
+				streampix = None
+				if self.feed and self.feed.title != _("New Items"):  # exclude collecting channel "New Items"
+					for enclosure in RSSBaseView.findEnclosure(self, content[3]):
+						picfile = join(TEMPPATH, url2filename(enclosure[0]))
+						if pngfile == self.nopic and isExtensionSupported(picfile):  # catch first supported picture-url in list of attachments
+							pngfile = "%s.png" % picfile[:picfile.rfind(".")]
+							if not exists(pngfile):
+								callInThread(downloadPicfile, enclosure[0], picfile, resize=self.picsize, callback=self.refreshPics)
+								pngfile = self.nopic
+						if not streampix and enclosure[1] in MIMEVIDEOS + MIMEAUDIOS:  # is a supported stream-url in list of attachments
+							streampix = self.streampix
 				picpix = LoadPixmap(cached=True, path=pngfile if exists(pngfile) else join(TEMPPATH, NOPIC))
-				skinlist.append((content[0], self.linepix, picpix))
+				skinlist.append((content[0], self.linepix, picpix, streampix))
 			self["content"].updateList(skinlist)
 
 	def refreshPics(self):
 		skinlist = []
 		if self.feed:
 			for content in self.feed.history:
-				picurl = content[3][0][0] if len(content[3]) > 0 else ""
+				picurl = ""
+				streampix = None
+				for enclosure in RSSBaseView.findEnclosure(self, content[3]):
+					if not picurl and enclosure[1] in MIMEIMAGES:  # catch first supported picture-url in list of attachments
+						picurl = enclosure[0]
+					if not streampix and enclosure[1] in MIMEVIDEOS + MIMEAUDIOS:  # is a supported stream-url in list of attachments
+						streampix = self.streampix
 				pngfile = join(TEMPPATH, url2filename(picurl, forcepng=True)) if picurl else self.nopic
 				picpix = LoadPixmap(cached=True, path=pngfile if exists(pngfile) else join(TEMPPATH, NOPIC))
-				skinlist.append((content[0], self.linepix, picpix))
+				skinlist.append((content[0], self.linepix, picpix, streampix))
 			self["content"].updateList(skinlist)
 
 	def updateInfo(self):
@@ -765,10 +836,7 @@ class RSS_Overview(RSSBaseView):  # Shows an Overview over all RSS-Feeds known t
 			self.session.deleteDialog(tickerView)
 			tickerView = None
 		if exists(TEMPPATH):
-			try:
-				rmtree(TEMPPATH)
-			except OSError:
-				pass
+			rmtree(TEMPPATH)
 		self.close()
 
 	def fillFeeds(self):  # Feedlist contains our virtual Feed and all real ones
@@ -798,7 +866,7 @@ class RSS_Overview(RSSBaseView):  # Shows an Overview over all RSS-Feeds known t
 			logourl = feed[0].logoUrl
 			if logourl:
 				logofile = join(TEMPPATH, url2filename(logourl))
-				logopng = "%s.png" % logofile.split(".")[0]
+				logopng = "%s.png" % logofile[:logofile.rfind(".")]
 				if not exists(logopng):
 					callInThread(downloadPicfile, logourl, logofile, resize=self.logosize, callback=self.refreshPics)
 			else:
@@ -901,7 +969,7 @@ class RSSPoller:  # Keeps all Feed and takes care of (automatic) updates
 				self.doCallback(ident)
 		except NotImplementedError as errmsg:
 			if ident:  # Don't show this error when updating in background
-				AddPopup(_("Sorry, this type of feed is unsupported:\n%s") % str(errmsg), MessageBox.TYPE_INFO, timeout=3)
+				AddPopup(_("Sorry, this type of feed is unsupported:\n%s") % str(errmsg), type=MessageBox.TYPE_INFO, timeout=3)
 			else:
 				self.next_feed()  # We don't want to stop updating just because one feed is broken
 		except Exception:
@@ -963,7 +1031,7 @@ class RSSPoller:  # Keeps all Feed and takes care of (automatic) updates
 					RemovePopup(NOTIFICATIONID)
 					AddNotificationWithID(NOTIFICATIONID, RSS_FeedView, feed=self.newItemFeed, newItems=True)
 				elif update_notification_value == "notification":
-					AddPopup(_("Received %d new news item(s).") % (len(self.newItemFeed.history)), MessageBox.TYPE_INFO, 5, NOTIFICATIONID)
+					AddPopup(_("Received %d new news item(s).") % (len(self.newItemFeed.history)), NOTIFICATIONID, type=MessageBox.TYPE_INFO, timeout=5)
 				elif update_notification_value == "ticker":
 					if tickerView:
 						tickerView.display(self.newItemFeed)
@@ -1057,6 +1125,19 @@ class RSSEntryWrapper(ElementWrapper):
 			myl = []
 			for elem in self._element.findall("%senclosure" % self._ns):
 				myl.append((elem.get("url"), elem.get("type"), elem.get("length")))
+			for elem in self._element.findall("%sdescription" % self._ns):  # alternative #1: search for enclosures
+				res = search(r'src="(.*?)"', elem.text)  # perhaps not the most elegant way but it works
+				if res:
+					url = res.group(1)
+					myl.append((url, EXT2MIME.get(cleanupUrl(url[url.rfind("."):]), "unknown"), "0"))  # create missing MIME type
+				else:  # alternative #2: search for enclosures. HINT: tag '<content:encoded>' can't be found by self._element.findall()
+					res = search(r'src="(.*?)"', tostring(self._element).decode())  # quick'n'dirty but it works
+					if res:
+						url = res.group(1)
+						myl.append((url, EXT2MIME.get(cleanupUrl(url[url.rfind("."):]), "unknown"), "0"))
+			for elem in self._element.findall("%simage" % self._ns):  # alternative #3: search for enclosures
+				url = elem.text
+				myl.append((url, EXT2MIME.get(cleanupUrl(url[url.rfind("."):]), "unknown"), "0"))  # create missing MIME type
 			return myl
 		elif tag == "id":
 			return self._element.findtext("%sguid" % self._ns, "%s%s" % (self.title, self.link))
@@ -1194,7 +1275,7 @@ class UniversalFeed(BaseFeed):  # Feed which can handle rdf, rss and atom feeds 
 		del self.history[self.MAX_HISTORY_ELEMENTS:]  # Eventually cut history
 		return self.history[:idx]
 
-	def gotFeed(self, feed):  # select wrapping method and
+	def gotFeed(self, feed):  # select wrapping method
 		if self.wrapper:
 			wrapper = self.wrapper(feed, self.ns)
 		else:
@@ -1219,9 +1300,7 @@ class UniversalFeed(BaseFeed):  # Feed which can handle rdf, rss and atom feeds 
 			self.description = strip_readable(wrapper.description) or ""
 			for child in feed.findall("channel"):  # perhaps not the most elegant way but it works
 				image = child.find("image")
-				if image:
-					logoUrl = image.find("url").text
-					self.logoUrl = logoUrl
+				self.logoUrl = image.find("url").text if image else ""
 		return self.gotWrapper(wrapper)
 
 
