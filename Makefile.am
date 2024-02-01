@@ -2,7 +2,6 @@ ACLOCAL_AMFLAGS = -I m4
 
 SUBDIRS = \
 	advhdmi \
-	aihdcontroler \
 	antiscrollbar \
 	aspectratioswitch \
 	audiorestart \
@@ -11,7 +10,6 @@ SUBDIRS = \
 	automaticvolumeadjustment \
 	autoresolution \
 	autotimer \
-	babelzapper \
 	birthdayreminder \
 	bonjour \
 	cdinfo \
@@ -37,71 +35,37 @@ SUBDIRS = \
 	fritzcall \
 	fstabeditor \
 	ftpbrowser \
-	googlemaps \
 	growlee \
 	imdb \
 	infobartunerstate \
-	kiddytimer \
-	letterbox \
 	mediadownloader \
-	merlinepg \
-	merlinepgcenter \
-	merlinmusicplayer \
 	mosaic \
 	moviecut \
 	movieretitle \
-	moviesearch \
 	movietagger \
 	mphelp \
-	multirc \
-	ncidclient \
-	netcaster \
 	ofdb \
-	orfat \
-	orfteletext \
-	partnerbox \
 	permanentclock \
 	pipservicerelation \
 	podcast \
-	porncenter \
-	pushservice \
-	quickbutton \
 	reconstructapsc \
 	reftopiconname \
-	rsdownloader \
-	seriesplugin \
-	setpasswd \
 	shoutcast \
-	showclock \
 	simplerss \
 	startuptostandby \
-	subsdownloader2 \
-	svdrp \
 	tageditor \
-	teletext \
 	toolkit \
-	tvcharts \
-	unwetterinfo \
-	valixdcontrol \
-	videocolorspace \
 	vlcplayer \
 	vps \
 	weatherplugin \
 	weathercomponent \
 	weathercomponenthandler \
-	webadmin \
-	webbouqueteditor \
-	webcamviewer \
 	werbezapper \
-	zaphistorybrowser \
 	zapstatistic \
-	zdfmediathek \
 	esame \
-	schiffe \
 	sudoku \
 	vierg \
-	bmediacenter \
-	advancedmovieselection
+	bmediacenter
 
 if DREAMBOX
 SUBDIRS +=  fancontrol2 letterbox logomanager movielistpreview genuinedreambox
@@ -128,8 +92,6 @@ if TPM
 SUBDIRS += \
 	mytube \
 	yttrailer \
-	webinterface \
-	menusort \
 	pluginhider \
 	pluginsort 
 endif
@@ -138,12 +100,6 @@ if PLI
 SUBDIRS += networkbrowserpli epgsearchpli
 else
 SUBDIRS += networkbrowser epgsearch
-endif
-
-if REMOTETIMER2
-SUBDIRS += 	remotetimer2
-else
-SUBDIRS += 	remotetimer
 endif
 
 SUBDIRS += tetris ardmediathek netzkino Series2Folder srfmediathek epgexport
