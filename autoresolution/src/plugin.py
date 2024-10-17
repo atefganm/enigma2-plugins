@@ -533,7 +533,7 @@ class ResolutionLabel(Screen):
 		self.hideTimer.start(config.usage.infobar_timeout.index * 2000, True)
 
 
-class AutoResSetupMenu(Screen, ConfigListScreen):
+class AutoResSetupMenu(ConfigListScreen, Screen):
 	def __init__(self, session):
 		Screen.__init__(self, session)
 		self.skinName = ["AutoResSetupMenu", "Setup"]
@@ -869,8 +869,14 @@ def autostart(reason, **kwargs):
 
 
 def startSetup(menuid):
-	if IMAGEDISTRO in ('teamblue', 'openhdf'):
+	if IMAGEDISTRO in ('openhdf'):
 		if menuid != "video_menu":
+			return []
+	elif IMAGEDISTRO in ('teamblue'):
+		if menuid != "video":
+			return []
+	elif IMAGEDISTRO in ('openbh', 'openvix'):
+		if menuid != "av":
 			return []
 	else:
 		if menuid != "system":
